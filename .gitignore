@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+*.log
+
+# Virtual env & secrets
+venv/
+backend_env/
+.env
+.env.*
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/

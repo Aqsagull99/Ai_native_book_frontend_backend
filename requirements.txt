@@ -1,0 +1,17 @@
+python-dotenv==1.0.0
+httpx==0.25.2
+beautifulsoup4
+cohere
+qdrant-client
+langchain-text-splitters
+dataclasses-json
+google-generativeai
+openai
+fastapi
+uvicorn
+pydantic
+pytest
+sqlalchemy
+asyncpg
+better-auth
+aiosqlite
