@@ -16,3 +16,4 @@ asyncpg
 better-auth
 aiosqlite
 bcrypt
+python-jose[cryptography]
