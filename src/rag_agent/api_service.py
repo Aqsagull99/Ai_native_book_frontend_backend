@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, validator
 
 from src.rag_agent.agent import create_rag_agent
+import asyncio
 from src.rag_agent.models import AgentRequest, AgentResponse, ContentChunk
 
 # Set up logging
@@ -67,8 +68,8 @@ class HealthResponse(BaseModel):
     timestamp: str
     details: Optional[Dict[str, Any]] = None
 
-# Initialize the RAG agent
-rag_agent = create_rag_agent()
+# Initialize the RAG agent (will be created per request to avoid event loop issues)
+# rag_agent = create_rag_agent()
 
 @router.post("/query",
              summary="Process a user query through the RAG agent",
@@ -89,16 +90,38 @@ async def process_query(request: UserQueryRequest):
     try:
         logger.info(f"Processing query: {request.query_text[:50]}...")
 
+        # Create a new agent instance for this request to avoid event loop issues
+        rag_agent = create_rag_agent()
+
         # Combine the query with selected text if provided
         final_query = request.query_text
         if request.selected_text:
             final_query = f"Context: {request.selected_text}\n\nQuestion: {request.query_text}"
 
-        # Process the query using the RAG agent
-        response = rag_agent.process_query_with_agents_sdk(
-            query=final_query,
-            top_k=request.top_k
-        )
+        # The OpenAI Agents SDK uses async/await, so we need to call it properly
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Create a new event loop in a separate thread for the agent processing
+        def run_agent_in_new_loop():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                # Create a new agent instance in the new loop to avoid event loop issues
+                agent_in_loop = create_rag_agent()
+                result = agent_in_loop.process_query_with_agents_sdk(
+                    query=final_query,
+                    top_k=request.top_k
+                )
+                return result
+            finally:
+                new_loop.close()
+
+        # Run the agent processing in a separate thread with its own event loop
+        with ThreadPoolExecutor() as executor:
+            import concurrent.futures
+            future = executor.submit(run_agent_in_new_loop)
+            response = future.result()
 
         logger.info(f"Query processed successfully, retrieved {len(response.retrieved_chunks)} chunks")
 

@@ -1,7 +1,7 @@
-"""
-Google Gemini client service for the RAG agent with OpenAI Agents SDK
-Implements the Google AI client as a dedicated service for LLM interactions
-"""
+# """
+# Google Gemini client service for the RAG agent with OpenAI Agents SDK
+# Implements the Google AI client as a dedicated service for LLM interactions
+# """
 
 import os
 import logging

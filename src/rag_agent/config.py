@@ -11,7 +11,7 @@ class Config:
 
     # Google AI/Gemini settings
     GEMINI_API_KEY: str = os.getenv('GEMINI_API_KEY', '')
-    GEMINI_MODEL_NAME: str = os.getenv('GEMINI_MODEL_NAME', 'gemini-1.5-flash')
+    GEMINI_MODEL_NAME: str = os.getenv('GEMINI_MODEL_NAME', 'gemini-flash-lite-latest')
 
     # Qdrant settings
     QDRANT_URL: str = os.getenv('QDRANT_URL', '')

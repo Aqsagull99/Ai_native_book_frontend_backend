@@ -114,9 +114,8 @@ def test_agent_creation():
         agent = create_rag_agent()
         assert agent is not None
         # Check that required components are initialized
-        assert hasattr(agent, 'retrieve_content')
-        assert hasattr(agent, 'generate_answer')
         assert hasattr(agent, 'process_query')
+        assert hasattr(agent, 'process_query_with_agents_sdk')
     except Exception as e:
         pytest.fail(f"Failed to create agent: {str(e)}")
 
