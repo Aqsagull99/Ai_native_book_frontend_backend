@@ -53,20 +53,6 @@ def verify_token(token: str):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plain password against a hashed password."""
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-
-
-def get_password_hash(password: str) -> str:
-    """Hash a plain password, ensuring it doesn't exceed bcrypt's 72-byte limit."""
-    # Ensure password is no longer than 72 bytes for bcrypt
-    # Bcrypt has a hard limit of 72 bytes (not characters) for passwords
-    password_bytes = password.encode('utf-8')
-    if len(password_bytes) > 72:
-        # Truncate to 72 bytes and decode back to string
-        password = password_bytes[:72].decode('utf-8', errors='ignore')
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 router = APIRouter()
 
@@ -106,20 +92,6 @@ class BetterAuthUserResponse(BaseModel):
     image: Optional[str] = None
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plain password against a hashed password."""
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-
-
-def get_password_hash(password: str) -> str:
-    """Hash a plain password, ensuring it doesn't exceed bcrypt's 72-byte limit."""
-    # Ensure password is no longer than 72 bytes for bcrypt
-    # Bcrypt has a hard limit of 72 bytes (not characters) for passwords
-    password_bytes = password.encode('utf-8')
-    if len(password_bytes) > 72:
-        # Truncate to 72 bytes and decode back to string
-        password = password_bytes[:72].decode('utf-8', errors='ignore')
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 
 @router.post("/signup")
