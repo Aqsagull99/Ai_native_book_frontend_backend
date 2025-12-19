@@ -8,11 +8,21 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from database import Base, get_db
+from database import Base, get_db, DATABASE_URL, engine
 from models import User, UserProfile  # Import models to register them with Base
 from auth import router as auth_router
 from endpoints.personalization import router as personalization_router, bonus_points_router
 from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Create FastAPI app
+app = FastAPI(
+    title="Better-Auth API",
+    description="API for user authentication and profile management",
+    version="1.0.0"
+)
 
 # Import RAG agent router with error handling for missing environment variables
 try:
@@ -36,13 +46,9 @@ except Exception as e:
     rag_agent_router = rag_error_router
     rag_agent_available = False
 
-# Load environment variables
-load_dotenv()
-
 # Initialize database tables on startup
 @app.on_event("startup")
 async def startup_event():
-    from database import DATABASE_URL, engine
     from models import User, UserProfile  # Import models to ensure they're registered
 
     print(f"Initializing database tables...")
@@ -63,13 +69,6 @@ async def startup_event():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print("Database tables created successfully!")
-
-# Create FastAPI app
-app = FastAPI(
-    title="Better-Auth API",
-    description="API for user authentication and profile management",
-    version="1.0.0"
-)
 
 # Add CORS middleware
 app.add_middleware(
