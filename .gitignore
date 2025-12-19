@@ -13,3 +13,10 @@ backend_env/
 .DS_Store
 .vscode/
 .idea/
+
+
+
+better_auth.db
+*.db
+
+
