@@ -5,10 +5,15 @@ import os
 from datetime import datetime
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from database import get_db
+from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from database import Base, get_db
+from models import User, UserProfile  # Import models to register them with Base
 from auth import router as auth_router
 from endpoints.personalization import router as personalization_router, bonus_points_router
+from dotenv import load_dotenv
+
 # Import RAG agent router with error handling for missing environment variables
 try:
     from src.rag_agent.api_service import router as rag_agent_router
@@ -30,10 +35,34 @@ except Exception as e:
 
     rag_agent_router = rag_error_router
     rag_agent_available = False
-from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Initialize database tables on startup
+@app.on_event("startup")
+async def startup_event():
+    from database import DATABASE_URL, engine
+    from models import User, UserProfile  # Import models to ensure they're registered
+
+    print(f"Initializing database tables...")
+    print(f"Database URL: {DATABASE_URL}")
+
+    # For SQLite, we need to use the sync version to create tables
+    if DATABASE_URL and DATABASE_URL.startswith("sqlite+aiosqlite"):
+        sync_db_url = DATABASE_URL.replace("sqlite+aiosqlite:///", "sqlite:///")
+
+        # Create sync engine for table creation
+        sync_engine = create_engine(sync_db_url)
+
+        # Create all tables
+        Base.metadata.create_all(bind=sync_engine)
+        print("SQLite database tables created successfully!")
+    else:
+        # For other databases, create tables directly
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("Database tables created successfully!")
 
 # Create FastAPI app
 app = FastAPI(
