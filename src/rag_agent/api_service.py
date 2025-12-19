@@ -160,7 +160,6 @@ async def process_query(request: UserQueryRequest):
             execution_time=response.execution_time,
             timestamp=response.timestamp.isoformat()
         )
-
     except ValueError as ve:
         logger.error(f"Validation error: {str(ve)}")
         raise HTTPException(
@@ -175,7 +174,7 @@ async def process_query(request: UserQueryRequest):
         # Ensure we always return a valid JSON response
         error_detail = {
             "error": "QUERY_PROCESSING_ERROR",
-            "message": "Failed to process query due to internal error. Please try again."
+            "message": f"Failed to process query due to internal error: {str(e)}"
         }
         # Log the actual error for debugging
         logger.error(f"Full error details: {str(e)}")
