@@ -12,10 +12,48 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, validator
-
-from src.rag_agent.agent import create_rag_agent
 import asyncio
 from src.rag_agent.models import AgentRequest, AgentResponse, ContentChunk
+
+# Import agent functions but handle initialization errors gracefully
+# Global variable to cache the agent or error state
+_cached_agent = None
+_agent_init_error = None
+
+def create_rag_agent():
+    global _cached_agent, _agent_init_error
+
+    # Return cached agent if already created successfully
+    if _cached_agent is not None:
+        return _cached_agent
+
+    # Return cached error agent if initialization already failed
+    if _agent_init_error is not None:
+        return _agent_init_error
+
+    try:
+        from src.rag_agent.agent import RAGAgent
+        agent = RAGAgent()
+        _cached_agent = agent
+        return agent
+    except Exception as e:
+        logger.error(f"Failed to create RAG agent: {str(e)}")
+        _agent_init_error = e
+        # Return a mock agent that handles errors gracefully
+        class MockRAGAgent:
+            def process_query_with_agents_sdk(self, query: str, top_k: int = 5):
+                from datetime import datetime
+                from src.rag_agent.models import AgentResponse, ContentChunk
+                return AgentResponse(
+                    query_text=query,
+                    answer=f"Service unavailable: {str(e)}",
+                    retrieved_chunks=[],
+                    confidence_score=0.0,
+                    execution_time=0.0,
+                    timestamp=datetime.now()
+                )
+        _agent_init_error = MockRAGAgent()
+        return _agent_init_error
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -90,7 +128,7 @@ async def process_query(request: UserQueryRequest):
     try:
         logger.info(f"Processing query: {request.query_text[:50]}...")
 
-        # Create a new agent instance for this request to avoid event loop issues
+        # Create a new agent instance for this request
         rag_agent = create_rag_agent()
 
         # Combine the query with selected text if provided
@@ -98,30 +136,11 @@ async def process_query(request: UserQueryRequest):
         if request.selected_text:
             final_query = f"Context: {request.selected_text}\n\nQuestion: {request.query_text}"
 
-        # The OpenAI Agents SDK uses async/await, so we need to call it properly
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-
-        # Create a new event loop in a separate thread for the agent processing
-        def run_agent_in_new_loop():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            try:
-                # Create a new agent instance in the new loop to avoid event loop issues
-                agent_in_loop = create_rag_agent()
-                result = agent_in_loop.process_query_with_agents_sdk(
-                    query=final_query,
-                    top_k=request.top_k
-                )
-                return result
-            finally:
-                new_loop.close()
-
-        # Run the agent processing in a separate thread with its own event loop
-        with ThreadPoolExecutor() as executor:
-            import concurrent.futures
-            future = executor.submit(run_agent_in_new_loop)
-            response = future.result()
+        # Process the query directly without threading to avoid event loop issues
+        response = rag_agent.process_query_with_agents_sdk(
+            query=final_query,
+            top_k=request.top_k
+        )
 
         logger.info(f"Query processed successfully, retrieved {len(response.retrieved_chunks)} chunks")
 
@@ -153,12 +172,16 @@ async def process_query(request: UserQueryRequest):
         )
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
+        # Ensure we always return a valid JSON response
+        error_detail = {
+            "error": "QUERY_PROCESSING_ERROR",
+            "message": "Failed to process query due to internal error. Please try again."
+        }
+        # Log the actual error for debugging
+        logger.error(f"Full error details: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "QUERY_PROCESSING_ERROR",
-                "message": "Failed to process query due to internal error. Please try again."
-            }
+            detail=error_detail
         )
 
 @router.get("/health",
@@ -184,11 +207,12 @@ async def health_check():
         return health_status
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
-        return HealthResponse(
-            status="unavailable",
-            timestamp=datetime.now().isoformat(),
-            details={
-                "error": str(e)
+        # Ensure we always return a valid JSON response even on error
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "HEALTH_CHECK_ERROR",
+                "message": "Health check failed"
             }
         )
 
