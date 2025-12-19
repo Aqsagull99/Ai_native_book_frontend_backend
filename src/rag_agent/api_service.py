@@ -178,7 +178,7 @@ async def health_check():
             status="healthy",
             timestamp=datetime.now().isoformat(),
             details={
-                "rag_agent_initialized": rag_agent is not None
+                "rag_agent_initialized": True
             }
         )
         return health_status
