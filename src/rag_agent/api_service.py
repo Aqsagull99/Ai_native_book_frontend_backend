@@ -9,6 +9,8 @@ source citations.
 from datetime import datetime
 from typing import Dict, Any, Optional
 import logging
+import uuid
+import asyncio
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, validator
@@ -109,6 +111,9 @@ class HealthResponse(BaseModel):
 # Initialize the RAG agent (will be created per request to avoid event loop issues)
 # rag_agent = create_rag_agent()
 
+# In-memory job store for async query processing (ephemeral; use Redis or DB for production)
+_job_store: dict[str, dict] = {}
+
 @router.post("/query",
              summary="Process a user query through the RAG agent",
              description="Sends a user query to the RAG agent and returns a grounded response based on book content with source citations and links",
@@ -182,6 +187,76 @@ async def process_query(request: UserQueryRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_detail
         )
+
+
+@router.post("/query-async",
+             summary="Enqueue a user query for async processing",
+             description="Returns a job id which can be polled for results",
+             responses={
+                 202: {"description": "Job accepted"},
+                 400: {"description": "Invalid request"}
+             })
+async def process_query_async(request: UserQueryRequest):
+    # Create job id and store pending state
+    job_id = str(uuid.uuid4())
+    _job_store[job_id] = {"status": "pending", "created_at": datetime.utcnow().isoformat()}
+
+    # Prepare final query string
+    final_query = request.query_text
+    if request.selected_text:
+        final_query = f"Context: {request.selected_text}\n\nQuestion: {request.query_text}"
+
+    async def _run_job(jid: str, query_text: str, top_k: int):
+        try:
+            rag_agent = create_rag_agent()
+            # Run the possibly-blocking processing in a thread to avoid blocking the event loop
+            response = await asyncio.to_thread(rag_agent.process_query_with_agents_sdk, query_text, top_k)
+
+            # Serialize response into a simple dict
+            result = {
+                "query_text": request.query_text,
+                "answer": response.answer,
+                "retrieved_chunks": [
+                    {
+                        "content": c.content,
+                        "similarity_score": c.similarity_score,
+                        "metadata": c.metadata,
+                        "rank": c.rank
+                    } for c in response.retrieved_chunks
+                ],
+                "confidence_score": response.confidence_score,
+                "execution_time": response.execution_time,
+                "timestamp": response.timestamp.isoformat() if hasattr(response, 'timestamp') else datetime.utcnow().isoformat()
+            }
+
+            _job_store[jid]["status"] = "completed"
+            _job_store[jid]["result"] = result
+        except Exception as e:
+            logger.error(f"Async job {jid} failed: {e}")
+            _job_store[jid]["status"] = "failed"
+            _job_store[jid]["error"] = str(e)
+
+    # Schedule background job
+    asyncio.create_task(_run_job(job_id, final_query, request.top_k))
+
+    # Return 202 Accepted with job id
+    return {"job_id": job_id, "status": "pending", "poll_url": f"/api/rag/query/result/{job_id}"}
+
+
+@router.get("/query/result/{job_id}", summary="Get async query result")
+async def get_query_result(job_id: str):
+    job = _job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"error": "JOB_NOT_FOUND", "message": "Job id not found"})
+
+    # Return status and result/error if present
+    resp = {"job_id": job_id, "status": job.get("status")}
+    if job.get("status") == "completed":
+        resp["result"] = job.get("result")
+    elif job.get("status") == "failed":
+        resp["error"] = job.get("error")
+
+    return resp
 
 @router.get("/health",
             summary="Check the health status of the RAG agent",

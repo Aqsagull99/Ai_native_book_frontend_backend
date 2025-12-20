@@ -70,6 +70,15 @@ async def startup_event():
             await conn.run_sync(Base.metadata.create_all)
         print("Database tables created successfully!")
 
+    # Pre-initialize the RAG agent to avoid long per-request initialization delays
+    try:
+        # Import and create the agent (api_service handles errors internally)
+        from src.rag_agent.api_service import create_rag_agent
+        create_rag_agent()
+        print("RAG agent pre-initialized at startup")
+    except Exception as e:
+        print(f"RAG agent pre-initialization failed: {e}")
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
