@@ -16,6 +16,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, validator
 import asyncio
 from src.rag_agent.models import AgentRequest, AgentResponse, ContentChunk
+from src.rag_agent.rate_limiter import get_rate_limiter
+from src.rag_agent.config import Config
 
 # Import agent functions but handle initialization errors gracefully
 # Global variable to cache the agent or error state
@@ -131,6 +133,23 @@ async def process_query(request: UserQueryRequest):
     and returns a response with source citations and links to original content.
     """
     try:
+        # Check rate limit before processing the query
+        if Config.RATE_LIMIT_ENABLED:
+            rate_limiter = get_rate_limiter()
+            if not rate_limiter.increment_request():
+                # Rate limit exceeded
+                usage_info = rate_limiter.get_usage_info()
+                logger.warning(f"Rate limit exceeded: {usage_info['total_requests']}/{usage_info['daily_limit']} requests")
+
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail={
+                        "error": "RATE_LIMIT_EXCEEDED",
+                        "message": f"Daily request limit exceeded. {usage_info['daily_limit']} requests per day allowed.",
+                        "usage_info": usage_info
+                    }
+                )
+
         logger.info(f"Processing query: {request.query_text[:50]}...")
 
         # Create a new agent instance for this request
@@ -197,6 +216,23 @@ async def process_query(request: UserQueryRequest):
                  400: {"description": "Invalid request"}
              })
 async def process_query_async(request: UserQueryRequest):
+    # Check rate limit before processing the query
+    if Config.RATE_LIMIT_ENABLED:
+        rate_limiter = get_rate_limiter()
+        if not rate_limiter.increment_request():
+            # Rate limit exceeded
+            usage_info = rate_limiter.get_usage_info()
+            logger.warning(f"Rate limit exceeded for async query: {usage_info['total_requests']}/{usage_info['daily_limit']} requests")
+
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": "RATE_LIMIT_EXCEEDED",
+                    "message": f"Daily request limit exceeded. {usage_info['daily_limit']} requests per day allowed.",
+                    "usage_info": usage_info
+                }
+            )
+
     # Create job id and store pending state
     job_id = str(uuid.uuid4())
     _job_store[job_id] = {"status": "pending", "created_at": datetime.utcnow().isoformat()}
@@ -258,6 +294,42 @@ async def get_query_result(job_id: str):
 
     return resp
 
+@router.get("/rate-limit-status",
+            summary="Check the current rate limit status",
+            description="Returns the current usage and remaining requests for the daily rate limit",
+            responses={
+                200: {"description": "Rate limit status information"}
+            })
+async def rate_limit_status():
+    """
+    Rate limit status endpoint to check current usage and remaining requests.
+    """
+    try:
+        if Config.RATE_LIMIT_ENABLED:
+            rate_limiter = get_rate_limiter()
+            usage_info = rate_limiter.get_usage_info()
+
+            return {
+                "status": "rate_limiting_enabled",
+                "usage_info": usage_info,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "rate_limiting_disabled",
+                "timestamp": datetime.now().isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Rate limit status check failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "RATE_LIMIT_STATUS_ERROR",
+                "message": "Rate limit status check failed"
+            }
+        )
+
+
 @router.get("/health",
             summary="Check the health status of the RAG agent",
             description="Returns the health status of the RAG agent service",
@@ -275,7 +347,8 @@ async def health_check():
             status="healthy",
             timestamp=datetime.now().isoformat(),
             details={
-                "rag_agent_initialized": True
+                "rag_agent_initialized": True,
+                "rate_limiting_enabled": Config.RATE_LIMIT_ENABLED
             }
         )
         return health_status

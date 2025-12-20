@@ -11,7 +11,11 @@ class Config:
 
     # Google AI/Gemini settings
     GEMINI_API_KEY: str = os.getenv('GEMINI_API_KEY', '')
-    GEMINI_MODEL_NAME: str = os.getenv('GEMINI_MODEL_NAME', 'gemini-flash-lite-latest')
+    GEMINI_MODEL_NAME: str = os.getenv('GEMINI_MODEL_NAME', 'gemini-2.5-flash')  # Updated to gemini-2.5-flash
+
+    # Rate limiting settings
+    DAILY_REQUEST_LIMIT: int = int(os.getenv('DAILY_REQUEST_LIMIT', '200'))  # Default to 200 requests per day
+    RATE_LIMIT_ENABLED: bool = os.getenv('RATE_LIMIT_ENABLED', 'true').lower() == 'true'
 
     # Qdrant settings
     QDRANT_URL: str = os.getenv('QDRANT_URL', '')
