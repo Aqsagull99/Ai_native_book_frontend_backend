@@ -188,16 +188,27 @@ class RAGAgent:
         Returns:
             AgentResponse with the answer and metadata
         """
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
         start_time = time.time()
         logger.info(f"Starting query processing with OpenAI Agents Python SDK (OpenRouter/Gemini) for: '{query[:50]}{'...' if len(query) > 50 else ''}' (top_k={top_k})")
 
         try:
-            # Run the agent with the user query using the Google Gemini configuration
-            result = Runner.run_sync(
-                starting_agent=self.agent,
-                input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
-                run_config=self.config
-            )
+            # Check if we're in an event loop (like in FastAPI/uvicorn) and handle accordingly
+            try:
+                loop = asyncio.get_running_loop()
+                # We're already in an event loop, so run in a separate thread
+                with ThreadPoolExecutor() as executor:
+                    future = executor.submit(self._run_agent_sync, query, top_k)
+                    result = future.result()
+            except RuntimeError:
+                # No event loop running, we can use run_sync directly
+                result = Runner.run_sync(
+                    starting_agent=self.agent,
+                    input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
+                    run_config=self.config
+                )
 
             # Extract the final output from the agent result
             answer = result.final_output if result.final_output else "I couldn't find sufficient information to answer your question."
@@ -257,6 +268,17 @@ class RAGAgent:
             )
 
             return response
+
+    def _run_agent_sync(self, query: str, top_k: int):
+        """
+        Helper method to run the agent synchronously in a separate thread.
+        This is needed when running in an environment with an existing event loop (like FastAPI).
+        """
+        return Runner.run_sync(
+            starting_agent=self.agent,
+            input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
+            run_config=self.config
+        )
 
     def process_query(self, query: str, top_k: int = 5, include_citations: bool = True) -> AgentResponse:
         """
