@@ -163,11 +163,25 @@ async def process_query(request: UserQueryRequest):
 
         # Process the query using asyncio.to_thread to avoid event loop issues
         # This ensures the synchronous agent processing runs in a separate thread
-        response = await asyncio.to_thread(
-            rag_agent.process_query_with_agents_sdk,
-            final_query,
-            request.top_k
-        )
+        import asyncio
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    rag_agent.process_query_with_agents_sdk,
+                    final_query,
+                    request.top_k
+                ),
+                timeout=60.0  # 60 second timeout
+            )
+        except asyncio.TimeoutError:
+            logger.error("Query processing timed out after 60 seconds")
+            raise HTTPException(
+                status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                detail={
+                    "error": "QUERY_TIMEOUT",
+                    "message": "Query processing timed out. Please try again with a simpler query."
+                }
+            )
 
         logger.info(f"Query processed successfully, retrieved {len(response.retrieved_chunks)} chunks")
 
@@ -198,6 +212,8 @@ async def process_query(request: UserQueryRequest):
         )
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         # Ensure we always return a valid JSON response
         error_detail = {
             "error": "QUERY_PROCESSING_ERROR",
@@ -249,10 +265,13 @@ async def process_query_async(request: UserQueryRequest):
         try:
             rag_agent = create_rag_agent()
             # Run the possibly-blocking processing in a thread to avoid blocking the event loop
-            response = await asyncio.to_thread(
-                rag_agent.process_query_with_agents_sdk,
-                query_text,
-                top_k
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    rag_agent.process_query_with_agents_sdk,
+                    query_text,
+                    top_k
+                ),
+                timeout=60.0  # 60 second timeout
             )
 
             # Serialize response into a simple dict

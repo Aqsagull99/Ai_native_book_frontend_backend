@@ -199,9 +199,11 @@ class RAGAgent:
             try:
                 loop = asyncio.get_running_loop()
                 # We're already in an event loop, so run in a separate thread
+                import concurrent.futures
                 with ThreadPoolExecutor() as executor:
                     future = executor.submit(self._run_agent_sync, query, top_k)
-                    result = future.result()
+                    # Add a timeout to prevent hanging requests
+                    result = future.result(timeout=60)  # 60 second timeout
             except RuntimeError:
                 # No event loop running, we can use run_sync directly
                 result = Runner.run_sync(
