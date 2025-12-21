@@ -188,29 +188,16 @@ class RAGAgent:
         Returns:
             AgentResponse with the answer and metadata
         """
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-
         start_time = time.time()
         logger.info(f"Starting query processing with OpenAI Agents Python SDK (OpenRouter/Gemini) for: '{query[:50]}{'...' if len(query) > 50 else ''}' (top_k={top_k})")
 
         try:
-            # Check if we're in an event loop (like in FastAPI/uvicorn) and handle accordingly
-            try:
-                loop = asyncio.get_running_loop()
-                # We're already in an event loop, so run in a separate thread
-                import concurrent.futures
-                with ThreadPoolExecutor() as executor:
-                    future = executor.submit(self._run_agent_sync, query, top_k)
-                    # Add a timeout to prevent hanging requests
-                    result = future.result(timeout=60)  # 60 second timeout
-            except RuntimeError:
-                # No event loop running, we can use run_sync directly
-                result = Runner.run_sync(
-                    starting_agent=self.agent,
-                    input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
-                    run_config=self.config
-                )
+            # Use run_sync directly - it's thread-safe and handles event loops properly
+            result = Runner.run_sync(
+                starting_agent=self.agent,
+                input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
+                run_config=self.config
+            )
 
             # Extract the final output from the agent result
             answer = result.final_output if result.final_output else "I couldn't find sufficient information to answer your question."
@@ -271,40 +258,6 @@ class RAGAgent:
 
             return response
 
-    def _run_agent_sync(self, query: str, top_k: int):
-        """
-        Helper method to run the agent synchronously in a separate thread.
-        This is needed when running in an environment with an existing event loop (like FastAPI).
-        Handles event loop creation in worker threads where no event loop exists.
-        """
-        import asyncio
-        import threading
-
-        # Check if there's already an event loop in this thread
-        try:
-            loop = asyncio.get_running_loop()
-            # If we get here, there's already a loop, so we're in an async context
-            # This shouldn't happen when called from a thread executor, but just in case
-            return Runner.run_sync(
-                starting_agent=self.agent,
-                input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
-                run_config=self.config
-            )
-        except RuntimeError:
-            # No event loop in this thread, create one
-            # This is the common case when running in worker threads
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return Runner.run_sync(
-                    starting_agent=self.agent,
-                    input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
-                    run_config=self.config
-                )
-            finally:
-                loop.close()
-                # Reset the event loop for this thread
-                asyncio.set_event_loop(None)
 
     def process_query(self, query: str, top_k: int = 5, include_citations: bool = True) -> AgentResponse:
         """
