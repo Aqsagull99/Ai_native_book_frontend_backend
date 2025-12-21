@@ -2,7 +2,7 @@
 RAG Agent implementation using OpenAI Agents Python SDK
 Implements the core agent logic for answering book-related questions using vector retrieval
 Following the documentation at https://openai.github.io/openai-agents-python
-Uses Google Gemini via OpenAI-compatible endpoint for free usage
+Uses OpenRouter by default (with fallback to Google Gemini) via OpenAI-compatible endpoint
 """
 
 import time
@@ -110,7 +110,7 @@ def vector_retrieval_tool(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
 class RAGAgent:
     """
     RAG Agent class that implements the core functionality for answering book-related questions
-    using vector retrieval and the OpenAI Agents Python SDK with Google Gemini via OpenAI-compatible endpoint.
+    using vector retrieval and the OpenAI Agents Python SDK with OpenRouter (fallback to Google Gemini) via OpenAI-compatible endpoint.
     """
 
     def __init__(self):
@@ -120,30 +120,51 @@ class RAGAgent:
         if not is_valid:
             raise ValueError(f"Invalid configuration: {error_msg}")
 
-        # Get the Google Gemini API key
-        gemini_api_key = os.environ.get("GEMINI_API_KEY")
-        if not gemini_api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+        # Prioritize OpenRouter configuration (as per user's request to use OpenRouter)
+        openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
 
-        # Mirror GEMINI key to OPENAI_API_KEY for OpenAI-compatible clients
-        # This helps when using OpenAI-compatible wrappers against Google's
-        # generative endpoint which may read OPENAI_API_KEY from env.
-        os.environ["OPENAI_API_KEY"] = gemini_api_key
-        logger.info("Using GEMINI_API_KEY as OPENAI_API_KEY for OpenAI-compatible client")
+        if openrouter_api_key:
+            # Use OpenRouter API
+            logger.info("Using OpenRouter API for LLM service")
+            os.environ["OPENAI_API_KEY"] = openrouter_api_key
 
-        # Create AsyncOpenAI client with Google Gemini API endpoint
-        external_client = AsyncOpenAI(
-            api_key=gemini_api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        )
+            # Create AsyncOpenAI client with OpenRouter API endpoint
+            external_client = AsyncOpenAI(
+                api_key=openrouter_api_key,
+                base_url=Config.OPENROUTER_BASE_URL,
+            )
 
-        # Create the model using OpenAIChatCompletionsModel with the external client
-        model = OpenAIChatCompletionsModel(
-            model=Config.GEMINI_MODEL_NAME,  # Use the configured Gemini model
-            openai_client=external_client
-        )
+            # Create the model using OpenAIChatCompletionsModel with the external client
+            model = OpenAIChatCompletionsModel(
+                model=Config.OPENROUTER_MODEL,  # Use the configured OpenRouter model
+                openai_client=external_client
+            )
 
-        # Create the main RAG agent using OpenAI Agents SDK with Google Gemini
+            logger.info(f"✅ RAG Agent initialized with OpenRouter using model: {Config.OPENROUTER_MODEL}")
+        else:
+            # Fallback to Google Gemini if OpenRouter is not configured
+            gemini_api_key = os.environ.get("GEMINI_API_KEY")
+            if not gemini_api_key:
+                raise ValueError("Neither OPENROUTER_API_KEY nor GEMINI_API_KEY environment variable is available")
+
+            logger.info("Falling back to Google Gemini API for LLM service")
+            os.environ["OPENAI_API_KEY"] = gemini_api_key
+
+            # Create AsyncOpenAI client with Google Gemini API endpoint
+            external_client = AsyncOpenAI(
+                api_key=gemini_api_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            )
+
+            # Create the model using OpenAIChatCompletionsModel with the external client
+            model = OpenAIChatCompletionsModel(
+                model=Config.GEMINI_MODEL_NAME,  # Use the configured Gemini model
+                openai_client=external_client
+            )
+
+            logger.info(f"✅ RAG Agent initialized with Google Gemini using model: {Config.GEMINI_MODEL_NAME}")
+
+        # Create the main RAG agent using OpenAI Agents SDK
         self.config = RunConfig(
             model=model,
             model_provider=external_client,
@@ -156,11 +177,9 @@ class RAGAgent:
             tools=[vector_retrieval_tool]  # Pass the tool function directly
         )
 
-        logger.info("✅ RAG Agent initialized with OpenAI Agents Python SDK using Google Gemini endpoint")
-
     def process_query_with_agents_sdk(self, query: str, top_k: int = 5) -> AgentResponse:
         """
-        Process a query using the OpenAI Agents Python SDK with tool calling through Google Gemini endpoint.
+        Process a query using the OpenAI Agents Python SDK with tool calling through OpenRouter (fallback to Google Gemini) endpoint.
 
         Args:
             query: The user's query
@@ -170,7 +189,7 @@ class RAGAgent:
             AgentResponse with the answer and metadata
         """
         start_time = time.time()
-        logger.info(f"Starting query processing with OpenAI Agents Python SDK (Google Gemini) for: '{query[:50]}{'...' if len(query) > 50 else ''}' (top_k={top_k})")
+        logger.info(f"Starting query processing with OpenAI Agents Python SDK (OpenRouter/Gemini) for: '{query[:50]}{'...' if len(query) > 50 else ''}' (top_k={top_k})")
 
         try:
             # Run the agent with the user query using the Google Gemini configuration
@@ -224,7 +243,7 @@ class RAGAgent:
 
         except Exception as e:
             total_time = time.time() - start_time
-            logger.error(f"Error processing query with OpenAI Agents Python SDK (Google Gemini): {str(e)}")
+            logger.error(f"Error processing query with OpenAI Agents Python SDK (OpenRouter/Gemini): {str(e)}")
             metrics_logger.error(f"query_error - query_length={len(query)}, total_time={total_time:.4f}s, error={str(e)}")
 
             # Return an error response
@@ -241,7 +260,7 @@ class RAGAgent:
 
     def process_query(self, query: str, top_k: int = 5, include_citations: bool = True) -> AgentResponse:
         """
-        Process a user query through the RAG pipeline using the OpenAI Agents SDK.
+        Process a user query through the RAG pipeline using the OpenAI Agents SDK with OpenRouter (fallback to Google Gemini).
 
         Args:
             query: The user's query
@@ -266,7 +285,7 @@ def create_rag_agent() -> RAGAgent:
 
 def process_agent_request(agent_request: AgentRequest) -> AgentResponse:
     """
-    Process an agent request and return the response using the OpenAI Agents SDK.
+    Process an agent request and return the response using the OpenAI Agents SDK with OpenRouter (fallback to Google Gemini).
 
     Args:
         agent_request: The agent request with query and parameters
@@ -285,7 +304,7 @@ def process_agent_request(agent_request: AgentRequest) -> AgentResponse:
 # Example usage function
 def run_sample_query(query: str, top_k: int = 5) -> Dict[str, Any]:
     """
-    Run a sample query to demonstrate the OpenAI Agents SDK RAG agent functionality.
+    Run a sample query to demonstrate the OpenAI Agents SDK RAG agent functionality with OpenRouter (fallback to Google Gemini).
 
     Args:
         query: The query to process
@@ -317,6 +336,9 @@ def run_sample_query(query: str, top_k: int = 5) -> Dict[str, Any]:
     }
 
     return result
+
+
+
 
 
 

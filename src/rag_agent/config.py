@@ -13,6 +13,11 @@ class Config:
     GEMINI_API_KEY: str = os.getenv('GEMINI_API_KEY', '')
     GEMINI_MODEL_NAME: str = os.getenv('GEMINI_MODEL_NAME', 'gemini-2.5-flash')  # Updated to gemini-2.5-flash
 
+    # OpenRouter settings
+    OPENROUTER_API_KEY: str = os.getenv('OPENROUTER_API_KEY', '')
+    OPENROUTER_BASE_URL: str = os.getenv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
+    OPENROUTER_MODEL: str = os.getenv('OPENROUTER_MODEL', 'mistralai/devstral-2512:free')
+
     # Rate limiting settings
     DAILY_REQUEST_LIMIT: int = int(os.getenv('DAILY_REQUEST_LIMIT', '200'))  # Default to 200 requests per day
     RATE_LIMIT_ENABLED: bool = os.getenv('RATE_LIMIT_ENABLED', 'true').lower() == 'true'
@@ -41,8 +46,11 @@ class Config:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        if not cls.GEMINI_API_KEY:
-            return False, "GEMINI_API_KEY environment variable is required"
+        # Check for OpenRouter configuration first (as per user's request to use OpenRouter)
+        if not cls.OPENROUTER_API_KEY:
+            # Fallback to Gemini if OpenRouter is not configured
+            if not cls.GEMINI_API_KEY:
+                return False, "Either OPENROUTER_API_KEY or GEMINI_API_KEY environment variable is required"
 
         if not cls.QDRANT_URL:
             return False, "QDRANT_URL environment variable is required"
