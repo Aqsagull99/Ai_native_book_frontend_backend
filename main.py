@@ -46,7 +46,7 @@ except Exception as e:
     rag_agent_router = rag_error_router
     rag_agent_available = False
 
-# Initialize database tables on startup
+# Initialize database tables on startup with timeout handling
 @app.on_event("startup")
 async def startup_event():
     from models import User, UserProfile  # Import models to ensure they're registered
@@ -54,28 +54,37 @@ async def startup_event():
     print(f"Initializing database tables...")
     print(f"Database URL: {DATABASE_URL}")
 
-    # For SQLite, we need to use the sync version to create tables
-    if DATABASE_URL and DATABASE_URL.startswith("sqlite+aiosqlite"):
-        sync_db_url = DATABASE_URL.replace("sqlite+aiosqlite:///", "sqlite:///")
+    try:
+        # For SQLite, we need to use the sync version to create tables
+        if DATABASE_URL and DATABASE_URL.startswith("sqlite+aiosqlite"):
+            sync_db_url = DATABASE_URL.replace("sqlite+aiosqlite:///", "sqlite:///")
 
-        # Create sync engine for table creation
-        sync_engine = create_engine(sync_db_url)
+            # Create sync engine for table creation
+            sync_engine = create_engine(sync_db_url)
 
-        # Create all tables
-        Base.metadata.create_all(bind=sync_engine)
-        print("SQLite database tables created successfully!")
-    else:
-        # For other databases, create tables directly
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        print("Database tables created successfully!")
+            # Create all tables
+            Base.metadata.create_all(bind=sync_engine)
+            print("SQLite database tables created successfully!")
+        else:
+            # For other databases, create tables directly with timeout
+            import asyncio
+            async with engine.begin() as conn:
+                await asyncio.wait_for(conn.run_sync(Base.metadata.create_all), timeout=30.0)
+            print("Database tables created successfully!")
+    except Exception as e:
+        print(f"Database initialization failed: {e}")
+        # Don't fail startup completely if database init fails - let the app start and handle DB errors per request
 
     # Pre-initialize the RAG agent to avoid long per-request initialization delays
     try:
         # Import and create the agent (api_service handles errors internally)
         from src.rag_agent.api_service import create_rag_agent
-        create_rag_agent()
+        # Use a timeout for RAG agent initialization to prevent startup hangs
+        import asyncio
+        await asyncio.wait_for(asyncio.get_event_loop().run_in_executor(None, create_rag_agent), timeout=15.0)
         print("RAG agent pre-initialized at startup")
+    except asyncio.TimeoutError:
+        print("RAG agent pre-initialization timed out after 15 seconds - will initialize on first request")
     except Exception as e:
         print(f"RAG agent pre-initialization failed: {e}")
 
