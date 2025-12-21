@@ -234,6 +234,15 @@ async def process_query(request: UserQueryRequest):
         }
         # Log the actual error for debugging
         logger.error(f"Full error details: {str(e)}")
+
+        # Check for common deployment issues
+        if "429" in str(e) or "Too Many Requests" in str(e):
+            error_detail["message"] = "Service temporarily unavailable due to rate limits. Please try again later."
+        elif "API" in str(e) or "Key" in str(e) or "Authentication" in str(e):
+            error_detail["message"] = "Service temporarily unavailable due to authentication issues."
+        elif "Connection" in str(e) or "connect" in str(e).lower() or "timeout" in str(e).lower():
+            error_detail["message"] = "Service temporarily unavailable due to network connectivity issues."
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_detail

@@ -188,16 +188,37 @@ class RAGAgent:
         Returns:
             AgentResponse with the answer and metadata
         """
+        import asyncio
+
         start_time = time.time()
         logger.info(f"Starting query processing with OpenAI Agents Python SDK (OpenRouter/Gemini) for: '{query[:50]}{'...' if len(query) > 50 else ''}' (top_k={top_k})")
 
         try:
-            # Use run_sync directly - it's thread-safe and handles event loops properly
-            result = Runner.run_sync(
-                starting_agent=self.agent,
-                input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
-                run_config=self.config
-            )
+            # Check if we're in a thread without an event loop and handle appropriately
+            try:
+                # Try to get the current event loop
+                loop = asyncio.get_running_loop()
+                # If we get here, we're in an async context
+                result = Runner.run_sync(
+                    starting_agent=self.agent,
+                    input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
+                    run_config=self.config
+                )
+            except RuntimeError:
+                # No event loop running, we're in a thread - create a new event loop for this thread
+                # This handles the case when running in a thread created by asyncio.to_thread()
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = Runner.run_sync(
+                        starting_agent=self.agent,
+                        input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
+                        run_config=self.config
+                    )
+                finally:
+                    loop.close()
+                    # Reset the event loop for this thread
+                    asyncio.set_event_loop(None)
 
             # Extract the final output from the agent result
             answer = result.final_output if result.final_output else "I couldn't find sufficient information to answer your question."
@@ -244,12 +265,20 @@ class RAGAgent:
         except Exception as e:
             total_time = time.time() - start_time
             logger.error(f"Error processing query with OpenAI Agents Python SDK (OpenRouter/Gemini): {str(e)}")
+            logger.error(f"Full error details: {repr(e)}")
             metrics_logger.error(f"query_error - query_length={len(query)}, total_time={total_time:.4f}s, error={str(e)}")
 
             # Return an error response
+            # For debugging in deployment, we'll return a more descriptive error
+            error_msg = f"Sorry, I encountered an error while processing your query: {type(e).__name__}"
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                error_msg = "Service temporarily unavailable due to rate limits. Please try again later."
+            elif "API" in str(e) or "Key" in str(e) or "Authentication" in str(e):
+                error_msg = "Service temporarily unavailable due to authentication issues."
+
             response = AgentResponse(
                 query_text=query,
-                answer="Sorry, I encountered an error while processing your query.",
+                answer=error_msg,
                 retrieved_chunks=[],
                 confidence_score=0.0,
                 execution_time=total_time,
