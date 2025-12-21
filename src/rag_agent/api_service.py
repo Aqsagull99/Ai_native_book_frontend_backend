@@ -42,6 +42,7 @@ def create_rag_agent():
         return agent
     except Exception as e:
         logger.error(f"Failed to create RAG agent: {str(e)}")
+        error_msg = str(e)  # Store the error message in a variable that can be accessed in the nested function
         _agent_init_error = e
         # Return a mock agent that handles errors gracefully
         class MockRAGAgent:
@@ -50,7 +51,7 @@ def create_rag_agent():
                 from src.rag_agent.models import AgentResponse, ContentChunk
                 return AgentResponse(
                     query_text=query,
-                    answer=f"Service unavailable: {str(e)}",
+                    answer=f"Service unavailable: {error_msg}",
                     retrieved_chunks=[],
                     confidence_score=0.0,
                     execution_time=0.0,
@@ -160,10 +161,12 @@ async def process_query(request: UserQueryRequest):
         if request.selected_text:
             final_query = f"Context: {request.selected_text}\n\nQuestion: {request.query_text}"
 
-        # Process the query directly without threading to avoid event loop issues
-        response = rag_agent.process_query_with_agents_sdk(
-            query=final_query,
-            top_k=request.top_k
+        # Process the query using asyncio.to_thread to avoid event loop issues
+        # This ensures the synchronous agent processing runs in a separate thread
+        response = await asyncio.to_thread(
+            rag_agent.process_query_with_agents_sdk,
+            final_query,
+            request.top_k
         )
 
         logger.info(f"Query processed successfully, retrieved {len(response.retrieved_chunks)} chunks")
@@ -246,7 +249,11 @@ async def process_query_async(request: UserQueryRequest):
         try:
             rag_agent = create_rag_agent()
             # Run the possibly-blocking processing in a thread to avoid blocking the event loop
-            response = await asyncio.to_thread(rag_agent.process_query_with_agents_sdk, query_text, top_k)
+            response = await asyncio.to_thread(
+                rag_agent.process_query_with_agents_sdk,
+                query_text,
+                top_k
+            )
 
             # Serialize response into a simple dict
             result = {
