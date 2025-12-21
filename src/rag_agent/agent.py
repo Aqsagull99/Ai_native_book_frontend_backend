@@ -275,12 +275,36 @@ class RAGAgent:
         """
         Helper method to run the agent synchronously in a separate thread.
         This is needed when running in an environment with an existing event loop (like FastAPI).
+        Handles event loop creation in worker threads where no event loop exists.
         """
-        return Runner.run_sync(
-            starting_agent=self.agent,
-            input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
-            run_config=self.config
-        )
+        import asyncio
+        import threading
+
+        # Check if there's already an event loop in this thread
+        try:
+            loop = asyncio.get_running_loop()
+            # If we get here, there's already a loop, so we're in an async context
+            # This shouldn't happen when called from a thread executor, but just in case
+            return Runner.run_sync(
+                starting_agent=self.agent,
+                input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
+                run_config=self.config
+            )
+        except RuntimeError:
+            # No event loop in this thread, create one
+            # This is the common case when running in worker threads
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return Runner.run_sync(
+                    starting_agent=self.agent,
+                    input=f"Query: {query}\nPlease retrieve relevant information and provide a comprehensive answer based on the book content. Retrieve {top_k} relevant chunks before answering.",
+                    run_config=self.config
+                )
+            finally:
+                loop.close()
+                # Reset the event loop for this thread
+                asyncio.set_event_loop(None)
 
     def process_query(self, query: str, top_k: int = 5, include_citations: bool = True) -> AgentResponse:
         """

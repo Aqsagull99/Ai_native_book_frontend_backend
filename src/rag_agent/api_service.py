@@ -182,6 +182,19 @@ async def process_query(request: UserQueryRequest):
                     "message": "Query processing timed out. Please try again with a simpler query."
                 }
             )
+        except RuntimeError as e:
+            if "There is no current event loop in thread" in str(e):
+                logger.error(f"Event loop issue in thread: {str(e)}")
+                # This shouldn't happen with our agent fixes, but adding extra handling
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "error": "EVENT_LOOP_ERROR",
+                        "message": "Internal event loop error occurred"
+                    }
+                )
+            else:
+                raise
 
         logger.info(f"Query processed successfully, retrieved {len(response.retrieved_chunks)} chunks")
 
@@ -265,14 +278,21 @@ async def process_query_async(request: UserQueryRequest):
         try:
             rag_agent = create_rag_agent()
             # Run the possibly-blocking processing in a thread to avoid blocking the event loop
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    rag_agent.process_query_with_agents_sdk,
-                    query_text,
-                    top_k
-                ),
-                timeout=60.0  # 60 second timeout
-            )
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        rag_agent.process_query_with_agents_sdk,
+                        query_text,
+                        top_k
+                    ),
+                    timeout=60.0  # 60 second timeout
+                )
+            except RuntimeError as e:
+                if "There is no current event loop in thread" in str(e):
+                    logger.error(f"Event loop issue in async job thread: {str(e)}")
+                    raise Exception(f"Event loop error in async processing: {str(e)}")
+                else:
+                    raise
 
             # Serialize response into a simple dict
             result = {
