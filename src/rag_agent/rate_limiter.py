@@ -1,9 +1,9 @@
-"""
-Rate Limiter Service for RAG Agent
+# """
+# Rate Limiter Service for RAG Agent
 
-Implements daily rate limiting to prevent exceeding API quotas.
-Tracks requests per day and enforces limits of 200 requests per day.
-"""
+# Implements daily rate limiting to prevent exceeding API quotas.
+# Tracks requests per day and enforces limits of 200 requests per day.
+# """
 import time
 import threading
 from datetime import datetime, timedelta

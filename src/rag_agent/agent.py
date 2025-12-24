@@ -41,6 +41,152 @@ logger = logging.getLogger(__name__)
 metrics_logger = logging.getLogger('agent.metrics')
 
 
+def is_book_related_query(query: str) -> bool:
+    """
+    Determine if a query is related to book content by checking for keywords.
+
+    Args:
+        query: The search query to analyze
+
+    Returns:
+        Boolean indicating if the query is likely book-related
+    """
+    book_related_keywords = [
+        'ai', 'machine learning', 'robotics', 'neural network', 'computer vision',
+        'nlp', 'natural language processing', 'deep learning', 'reinforcement learning',
+        'algorithm', 'programming', 'code', 'python', 'javascript', 'typescript',
+        'html', 'css', 'web development', 'next.js', 'robot', 'automation',
+        'artificial intelligence', 'ml', 'data', 'model', 'training', 'learning',
+        'book', 'chapter', 'content', 'topic', 'subject', 'course', 'tutorial'
+    ]
+
+    query_lower = query.lower()
+    # Check if any book-related keywords appear in the query
+    for keyword in book_related_keywords:
+        if keyword in query_lower:
+            return True
+
+    # If no clear book-related keywords, assume it might be author/general query
+    return False
+
+
+def author_info_function(query: str) -> List[Dict[str, Any]]:
+    """
+    Provide information about Aqsa Gull when queried about the author.
+
+    Args:
+        query: The search query to analyze
+
+    Returns:
+        List with author information if relevant, empty list otherwise
+    """
+    author_related_keywords = [
+        'aqsa gull', 'author', 'you', 'yourself', 'who are you', 'biography',
+        'background', 'experience', 'teaching', 'web developer', 'developer',
+        'creator', 'made this', 'wrote this', 'teacher', 'instructor'
+    ]
+
+    query_lower = query.lower()
+
+    # Check if the query is about the author
+    for keyword in author_related_keywords:
+        if keyword in query_lower:
+            return [{
+                "content": "Aqsa Gull is a passionate web developer, teacher, and author who specializes in simplifying technical concepts. Aqsa has expertise in HTML, CSS, JavaScript, TypeScript, and Next.js, and believes in step-by-step learning approaches that help beginners understand complex topics.",
+                "similarity_score": 1.0,
+                "metadata": {
+                    "url": "N/A",
+                    "title": "About the Author",
+                    "chunk_index": -1,
+                    "source_metadata": {},
+                    "created_at": ""
+                },
+                "rank": 1
+            }]
+
+    return []
+
+
+def general_response_function(query: str) -> List[Dict[str, Any]]:
+    """
+    Provide general responses for non-book, non-author related queries.
+
+    Args:
+        query: The search query to analyze
+
+    Returns:
+        List with general information if needed
+    """
+    # For general queries, return an empty list to indicate no specific content from book
+    return []
+
+
+def smart_retrieval_function(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """
+    Smart retrieval function that can classify query type and respond appropriately.
+
+    Args:
+        query: The search query to find relevant content
+        top_k: Number of results to retrieve (default: 5)
+
+    Returns:
+        List of retrieved content chunks with their metadata
+    """
+    try:
+        logger.info(f"Executing smart retrieval for query: '{query[:50]}{'...' if len(query) > 50 else ''}'")
+
+        # Check if it's an author-related query first
+        author_results = author_info_function(query)
+        if author_results:
+            logger.info(f"Author-related query detected: '{query[:30]}{'...' if len(query) > 30 else ''}'")
+            return author_results
+
+        # Check if it's a book-related query
+        if is_book_related_query(query):
+            logger.info(f"Book-related query detected: '{query[:30]}{'...' if len(query) > 30 else ''}'")
+
+            # Validate inputs
+            if not query or not query.strip():
+                raise ValueError("Query cannot be empty")
+
+            if top_k <= 0 or top_k > 100:
+                raise ValueError("top_k must be between 1 and 100")
+
+            # Create embedding for the query text
+            query_vector = create_query_embedding(query)
+
+            # Perform semantic search using Qdrant
+            search_results = search_vectors(
+                query_vector=query_vector,
+                top_k=top_k,
+                metadata_filter=None,  # No additional filters for now
+                collection_name=Config.QDRANT_COLLECTION_NAME
+            )
+
+            # Format results
+            formatted_results = []
+            for i, result in enumerate(search_results):
+                content_chunk = {
+                    "content": result["content"],
+                    "similarity_score": result["similarity_score"],
+                    "metadata": result["metadata"],
+                    "rank": i + 1
+                }
+                formatted_results.append(content_chunk)
+
+            logger.info(f"Retrieved {len(formatted_results)} results for book-related query: '{query[:30]}{'...' if len(query) > 30 else ''}'")
+            return formatted_results
+        else:
+            # For general queries, provide general response
+            logger.info(f"General query detected: '{query[:30]}{'...' if len(query) > 30 else ''}'")
+            return general_response_function(query)
+
+    except Exception as e:
+        logger.error(f"Error in smart retrieval function: {str(e)}")
+        # Fallback to vector retrieval in case of error
+        return vector_retrieval_function(query, top_k)
+
+
 def vector_retrieval_function(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     """
     Retrieve relevant content chunks from the vector database based on semantic similarity.
@@ -104,7 +250,7 @@ def vector_retrieval_tool(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     Returns:
         List of retrieved content chunks with their metadata
     """
-    return vector_retrieval_function(query, top_k)
+    return smart_retrieval_function(query, top_k)
 
 
 class RAGAgent:
@@ -172,8 +318,55 @@ class RAGAgent:
         )
 
         self.agent = Agent(
-            name="RAG Book Assistant",
-            instructions="You are a helpful RAG agent that answers questions about books. Use the vector_retrieval tool to find relevant information before answering. Focus on providing accurate, well-cited answers based on the book content.",
+            name="Aqsa Gull AI Assistant",
+            instructions="""You are an intelligent, friendly, and professional AI assistant representing Aqsa Gull — a talented author, web developer, and teacher. You are not just a book assistant. You are Aqsa Gull's digital reflection.
+
+Your responsibilities:
+1. Answer questions related to the book content accurately and clearly.
+2. Answer general user queries even if they are outside the book.
+3. Represent Aqsa Gull's professional background: web developer (HTML, CSS, JavaScript, TypeScript, Next.js), teacher and mentor for beginners, author of this book.
+4. Maintain a friendly, motivating, and beginner-friendly tone.
+
+PERSONALITY & TONE:
+- Be friendly and polite
+- Use light humor when appropriate
+- Be confident but humble
+- Be motivational for students
+- Use simple language (avoid over-complex explanations)
+
+Example tone: "Don't worry 😊 programming sab ko mushkil lagti hai pehle."
+
+BOOK CONTENT HANDLING:
+- If a query is related to the book → answer strictly based on book content.
+- If the book does not cover the question: Say so politely, then provide a general helpful explanation
+Example: "This topic is not directly covered in the book, but here's a simple explanation to help you…"
+
+ABOUT AQSA GULL (AUTHOR CONTEXT):
+- Aqsa Gull is a passionate web developer, a teacher who simplifies technical concepts, and an author who believes in step-by-step learning. Stay authentic and do not exaggerate.
+
+FUN & CASUAL QUERIES:
+Handle casual or funny questions with light, respectful humor.
+Examples:
+- "Are you human?" → "I'm AI 😄 but trained with human logic."
+- "Are you smarter than Aqsa?" → "No one beats the creator 😉"
+Avoid offensive or inappropriate humor.
+
+MOTIVATION & STUDENT SUPPORT:
+If a user feels confused or demotivated, encourage them, normalize struggle, and emphasize practice and patience.
+Example: "Mistakes are part of learning 💙 even professional developers face bugs daily."
+
+RESPONSE RULES:
+- Keep answers short and clear
+- Use bullet points when helpful
+- Avoid unnecessary technical jargon
+- Be respectful at all times
+
+SAFETY & BOUNDARIES:
+- Do not provide harmful, illegal, or misleading information.
+- Do not claim to be human.
+- If unsure, respond honestly and guide politely.
+
+FINAL GOAL: Make users feel supported, motivated, confident in learning, and connected to Aqsa Gull's teaching style. You are not just answering questions — you are guiding, inspiring, and simplifying.""",
             tools=[vector_retrieval_tool]  # Pass the tool function directly
         )
 
