@@ -1,14 +1,15 @@
 """
 Personalization API Endpoints
-Handles all personalization-related API requests
+Handles all personalization-related API requests including AI-powered content personalization.
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from database import get_db
 from services.personalization_service import PersonalizationService
 from pydantic import BaseModel
+import time
 
 # Router for personalization-specific endpoints
 personalization_router = APIRouter(prefix="/personalization", tags=["personalization"])
@@ -20,6 +21,25 @@ user_router = APIRouter(prefix="/user", tags=["user"])
 class ActivatePersonalizationRequest(BaseModel):
     chapter_id: str
     preferences: Optional[Dict[str, Any]] = None
+
+
+# NEW: Pydantic models for AI personalization
+class AIPersonalizationPreferences(BaseModel):
+    reading_level: str = "intermediate"  # beginner, intermediate, advanced
+    technical_explanations: bool = False
+    example_density: str = "normal"  # minimal, normal, detailed
+
+
+class AIPersonalizationUserProfile(BaseModel):
+    software_experience: Optional[str] = None
+    hardware_experience: Optional[str] = None
+
+
+class AIPersonalizeRequest(BaseModel):
+    chapter_id: str
+    content: str
+    preferences: AIPersonalizationPreferences
+    user_profile: Optional[AIPersonalizationUserProfile] = None
 
 from auth import verify_token
 
@@ -373,6 +393,141 @@ async def get_user_bonus_points(
         # Log the error and return a generic error message
         print(f"Error in get_user_bonus_points: {str(e)}")  # In production, use proper logging
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# ============================================
+# NEW: AI Personalization Endpoints
+# ============================================
+
+@personalization_router.post("/ai-personalize")
+async def ai_personalize_chapter(
+    request_data: AIPersonalizeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Generate AI-personalized chapter content based on user preferences.
+
+    Uses OpenRouter LLM to adapt content for the user's reading level while
+    preserving all headings, code blocks, and document structure.
+
+    Args:
+        request_data: Request body containing chapter_id, content, preferences, and optional user_profile
+        request: The HTTP request object
+        db: Database session
+        current_user: The currently authenticated user
+
+    Returns:
+        Dictionary with success status, personalized content, and metadata
+    """
+    try:
+        # Validate that the user is authenticated
+        if not current_user:
+            raise HTTPException(status_code=401, detail="User not authenticated")
+
+        # Validate request data
+        if not request_data.content or not request_data.content.strip():
+            raise HTTPException(status_code=400, detail="Missing required field: content")
+
+        if not request_data.chapter_id:
+            raise HTTPException(status_code=400, detail="Missing required field: chapter_id")
+
+        # Validate reading level
+        valid_reading_levels = ['beginner', 'intermediate', 'advanced']
+        if request_data.preferences.reading_level not in valid_reading_levels:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid reading_level. Must be one of: {valid_reading_levels}"
+            )
+
+        # Validate example density
+        valid_densities = ['minimal', 'normal', 'detailed']
+        if request_data.preferences.example_density not in valid_densities:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid example_density. Must be one of: {valid_densities}"
+            )
+
+        # Import and use the personalization agent
+        from src.services.personalization_agent import personalization_agent
+
+        # Check if agent is available
+        if not personalization_agent.is_available:
+            raise HTTPException(
+                status_code=503,
+                detail="AI personalization service temporarily unavailable"
+            )
+
+        # Prepare preferences dict
+        preferences_dict = {
+            "reading_level": request_data.preferences.reading_level,
+            "technical_explanations": request_data.preferences.technical_explanations,
+            "example_density": request_data.preferences.example_density
+        }
+
+        # Prepare user profile dict
+        user_profile_dict = None
+        if request_data.user_profile:
+            user_profile_dict = {
+                "software_experience": request_data.user_profile.software_experience,
+                "hardware_experience": request_data.user_profile.hardware_experience
+            }
+
+        # Call the personalization agent
+        result = await personalization_agent.personalize_content(
+            content=request_data.content,
+            preferences=preferences_dict,
+            user_profile=user_profile_dict
+        )
+
+        if result is None:
+            raise HTTPException(
+                status_code=503,
+                detail="AI personalization service failed to process content"
+            )
+
+        return {
+            "success": True,
+            "personalized_content": result["personalized_content"],
+            "chapter_id": request_data.chapter_id,
+            "preferences_applied": result["preferences_applied"],
+            "processing_time_ms": result["processing_time_ms"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in ai_personalize_chapter: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@personalization_router.get("/health")
+async def personalization_health_check() -> Dict[str, Any]:
+    """
+    Health check for the personalization service.
+
+    Checks if the AI personalization service and OpenRouter are properly configured
+    and available. No authentication required.
+
+    Returns:
+        Dictionary with service health status
+    """
+    try:
+        from src.services.personalization_agent import personalization_agent
+
+        health_result = await personalization_agent.health_check()
+        return health_result
+
+    except Exception as e:
+        print(f"Error in personalization health check: {str(e)}")
+        return {
+            "status": "unhealthy",
+            "service": "personalization",
+            "ai_available": False,
+            "openrouter_configured": False,
+            "error": str(e)
+        }
 
 
 # Export both routers

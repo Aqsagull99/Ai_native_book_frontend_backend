@@ -46,6 +46,40 @@ except Exception as e:
     rag_agent_router = rag_error_router
     rag_agent_available = False
 
+# Import Translation router with error handling for missing environment variables
+try:
+    from src.endpoints.translation import router as translation_router
+    translation_available = True
+except Exception as e:
+    print(f"Warning: Translation service could not be initialized: {str(e)}")
+    print("Translation functionality will be disabled")
+    # Create a dummy router that returns error messages
+    from fastapi import APIRouter
+    translation_error_router = APIRouter(prefix="/api/translation", tags=["translation"])
+
+    @translation_error_router.post("/translate")
+    async def translate_error():
+        raise HTTPException(status_code=503, detail="Translation service not available - check OPENROUTER_API_KEY environment variable")
+
+    @translation_error_router.post("/translate-async")
+    async def translate_async_error():
+        raise HTTPException(status_code=503, detail="Translation service not available - check OPENROUTER_API_KEY environment variable")
+
+    @translation_error_router.post("/status")
+    async def status_error():
+        raise HTTPException(status_code=503, detail="Translation service not available - check OPENROUTER_API_KEY environment variable")
+
+    @translation_error_router.post("/cache/check")
+    async def cache_check_error():
+        raise HTTPException(status_code=503, detail="Translation service not available - check OPENROUTER_API_KEY environment variable")
+
+    @translation_error_router.get("/health")
+    async def translation_health_error():
+        return {"status": "unavailable", "service": "translation", "error": "Translation service not available - check OPENROUTER_API_KEY environment variable"}
+
+    translation_router = translation_error_router
+    translation_available = False
+
 # Initialize database tables on startup with timeout handling
 @app.on_event("startup")
 async def startup_event():
@@ -120,6 +154,9 @@ app.include_router(bonus_points_router, prefix="/api", tags=["user"])
 # Include RAG agent routes
 app.include_router(rag_agent_router, prefix="/api/rag", tags=["rag-agent"])
 
+# Include translation routes
+app.include_router(translation_router, tags=["translation"])
+
 @app.get("/")
 async def root():
     return {"message": "Better-Auth API is running!"}
@@ -139,6 +176,7 @@ async def health_check():
         },
         "services": {
             "rag_agent_available": rag_agent_available,
+            "translation_available": translation_available,
         }
     }
     return health_info
